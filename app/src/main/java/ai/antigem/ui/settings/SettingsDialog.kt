@@ -89,6 +89,7 @@ enum class SettingsSection(val title: String, val subtitle: String) {
     THEMES("Themes", "Light and dark mode, and the theme gallery"),
     APPEARANCE("Appearance", "Chat text size, agent steps, message stats, header icons, the app switcher and Gemmy"),
     HOME_SCREEN("Home screen", "Widgets, shortcuts to chats and pages, scripts, and the app icon's menu"),
+    FILE_PICKER("Files in other apps", "AntiGem's and Ubuntu's home folders in Android's file picker and Files app"),
     STEM_RENDERING("STEM & diagrams", "Chemistry, graphs, geometry, simulations, circuits and offline Mermaid in chats"),
     SERVERS("Where agents run", "This phone (AntiGem or Ubuntu chroot) or your server, and how the app reaches it"),
     CONNECT_PC("Connect to PC", "Use the agents on your PC (AntiGem in VS Code) from this phone"),
@@ -755,6 +756,11 @@ fun SettingsDialog(
                     ) {
                         ai.antigem.ui.homescreen.HomeScreenSettingsCard()
                     }
+                    SettingsSection.FILE_PICKER -> Column(
+                        Modifier.fillMaxSize().bouncyVerticalScroll(rememberScrollState()).padding(16.dp)
+                    ) {
+                        ai.antigem.ui.files.FilePickerSettingsCard()
+                    }
                     SettingsSection.CLAUDE -> if (claude != null) {
                         ai.antigem.ui.claude.ClaudeSettingsGroup(claude, cardBg) { page ->
                             claudePage = page
@@ -894,6 +900,9 @@ private fun MainSettingsMenu(
     val codexOn = ai.antigem.domain.model.AgentKind.CODEX in enabledAgents
     val codexState = codex?.state?.collectAsState()?.value
     val c = ai.antigem.theme.AppColors
+    val appContext = LocalContext.current
+    // read again whenever the main page comes back (it leaves the composition while a page is open)
+    val filePickerOn = remember { ai.antigem.data.files.AntiGemDocumentsProvider.isEnabled(appContext) }
     fun row(section: SettingsSection, icon: ImageVector, tint: Color, value: String? = null, valueColor: Color? = null) =
         SettingsRowItem(icon, tint, section.title, value, valueColor) { onNavigate(section) }
 
@@ -961,6 +970,7 @@ private fun MainSettingsMenu(
                 row(SettingsSection.THEMES, Icons.Outlined.Palette, c.accentPink, ai.antigem.theme.ThemeManager.current.name),
                 row(SettingsSection.APPEARANCE, Icons.Outlined.Tune, c.accentAlt),
                 row(SettingsSection.HOME_SCREEN, Icons.Outlined.Widgets, c.accentTeal),
+                row(SettingsSection.FILE_PICKER, Icons.Outlined.FolderShared, c.warning, if (filePickerOn) "On" else "Off"),
                 stemRow,
                 // where agents run (Termux, Ubuntu chroot or a server), and whether the app reaches it
                 row(SettingsSection.SERVERS, Icons.Outlined.Dns, c.info,
@@ -1283,8 +1293,11 @@ private fun TermuxApiSubScreen(cardBg: Color, cardBorder: BorderStroke) {
     // both can change outside this page (an install in the terminal, the app installed from its APK): re-checked
     var packageInstalled by remember { mutableStateOf(env.isTermuxApiPackageInstalled(context)) }
     var appInstalled by remember { mutableStateOf(env.isTermuxApiAppInstalled(context)) }
+    // pkg only runs inside the local environment: without it the package can't be installed from here
+    var envInstalled by remember { mutableStateOf(env.isTermuxInstalled(context)) }
     LaunchedEffect(activeCommandExecution) {
         while (true) {
+            envInstalled = withContext(Dispatchers.IO) { env.isTermuxInstalled(context) }
             packageInstalled = withContext(Dispatchers.IO) { env.isTermuxApiPackageInstalled(context) }
             val nowInstalled = withContext(Dispatchers.IO) { env.isTermuxApiAppInstalled(context) }
             if (nowInstalled != appInstalled) {
@@ -1360,11 +1373,22 @@ private fun TermuxApiSubScreen(cardBg: Color, cardBorder: BorderStroke) {
                     detail = "The termux-* commands, in the terminal",
                     installed = packageInstalled
                 ) {
-                    OutlinedButton(
-                        onClick = { activeCommandExecution = "Install termux-api" to "pkg install -y termux-api" },
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                    ) { Text("Install", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                    if (envInstalled) {
+                        OutlinedButton(
+                            onClick = { activeCommandExecution = "Install termux-api" to "pkg install -y termux-api" },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) { Text("Install", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                    } else {
+                        Text(
+                            text = "Install the local environment first",
+                            modifier = Modifier.widthIn(max = 130.dp),
+                            fontSize = 11.5.sp,
+                            lineHeight = 15.sp,
+                            textAlign = TextAlign.End,
+                            color = ai.antigem.theme.AppColors.warning
+                        )
+                    }
                 }
                 TermuxApiStatusRow(
                     title = "AntiGem's Termux:API app",
